@@ -1,0 +1,313 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{url}
+
+\lstset{
+    basicstyle=\ttfamily\footnotesize,
+    breaklines=true,
+    frame=single,
+    language=C,
+    keywordstyle=\color{blue},
+    commentstyle=\color{green!50!black},
+    stringstyle=\color{red}
+}
+
+\begin{document}
+
+\title{Design and Implementation of a Modular CNN-Based Image Classification System on MAX78000 Microcontroller}
+
+\author{\IEEEauthorblockN{Tristan Jadman}
+\IEEEauthorblockA{\textit{Department of Computer Engineering} \\
+\textit{COE187: Embedded Hardware and Software Design}\\
+4th Year, Computer Engineering\\
+December 2025}}
+
+\maketitle
+
+\begin{abstract}
+This paper presents the design and implementation of a modular convolutional neural network (CNN) based image classification system deployed on the Analog Devices MAX78000 microcontroller. The system demonstrates real-time horse-or-human classification using an embedded camera and the MAX78000's dedicated CNN accelerator hardware. A key contribution of this work is the development of a reusable, modular software architecture that separates camera utilities, inference engine, display functions, and serial communication into independent modules. This design enables rapid prototyping and easy adaptation for other classification tasks. The implemented system achieves real-time inference with approximately 51.4 million operations per frame while maintaining a modular codebase suitable for educational and research purposes. Additionally, a Python-based image capture tool enables result validation and dataset collection for model improvement.
+\end{abstract}
+
+\begin{IEEEkeywords}
+embedded systems, convolutional neural network, edge AI, MAX78000, image classification, modular software design, microcontroller
+\end{IEEEkeywords}
+
+\section{Introduction}
+
+The deployment of artificial intelligence on edge devices has become increasingly important as applications demand low-latency, privacy-preserving, and power-efficient inference capabilities \cite{b1}. Traditional approaches require cloud connectivity for AI processing, introducing latency, privacy concerns, and dependency on network infrastructure. Edge AI addresses these limitations by performing inference directly on the embedded device.
+
+The MAX78000 microcontroller from Analog Devices represents a significant advancement in edge AI hardware, featuring a dedicated CNN accelerator capable of performing neural network inference at ultra-low power consumption \cite{b2}. This makes it ideal for battery-powered applications such as smart cameras, wearable devices, and IoT sensors.
+
+This project addresses the challenge of deploying CNN-based image classification on the MAX78000 while maintaining software modularity and reusability. The primary objectives are:
+
+\begin{enumerate}
+    \item Implement a functional horse-or-human image classifier using the MAX78000's CNN accelerator
+    \item Design a modular software architecture that can be easily adapted for other classification tasks
+    \item Develop utilities for capturing and streaming images to a host computer for validation and dataset collection
+    \item Document the system for educational purposes in embedded systems design
+\end{enumerate}
+
+\section{System Overview}
+
+\subsection{Hardware Platform}
+
+The system is built on the MAX78000 Feather Board (FTHR\_RevA), which integrates the following components:
+
+\begin{itemize}
+    \item \textbf{MAX78000 Microcontroller}: ARM Cortex-M4 processor at 100 MHz with dedicated CNN accelerator
+    \item \textbf{CNN Accelerator}: 64 parallel processors capable of 51.4 MOPS (million operations per second) at ultra-low power
+    \item \textbf{Memory}: 512 KB Flash, 128 KB SRAM, 442 KB CNN weight memory
+    \item \textbf{OV7692 Camera}: 128×128 RGB image capture capability
+    \item \textbf{User Interface}: Push button (PB1) for capture trigger, LEDs for status indication
+\end{itemize}
+
+\subsection{Software Architecture}
+
+The software follows a modular architecture separating concerns into distinct components, as illustrated in Fig. \ref{fig:architecture}.
+
+\begin{figure}[htbp]
+\centerline{\fbox{\parbox{0.9\columnwidth}{
+\centering
+\textbf{Application Layer} \\
+main.c, app\_config.h \\
+$\downarrow$ \\
+\textbf{Utility Modules} \\
+camera\_utils | inference\_utils | display\_utils | serial\_stream \\
+$\downarrow$ \\
+\textbf{CNN Layer} \\
+cnn.c, weights.h, softmax.c \\
+$\downarrow$ \\
+\textbf{Hardware Abstraction} \\
+MXC SDK, Camera Driver, DMA
+}}}
+\caption{Modular software architecture showing the layered design.}
+\label{fig:architecture}
+\end{figure}
+
+The key modules are:
+
+\begin{itemize}
+    \item \textbf{camera\_utils}: Handles camera initialization, image capture, and format conversion
+    \item \textbf{inference\_utils}: Wraps CNN operations including initialization, input loading, and result processing
+    \item \textbf{display\_utils}: Provides ASCII art rendering for console-based image preview
+    \item \textbf{serial\_stream}: Enables image streaming to host computer for capture and validation
+    \item \textbf{app\_config.h}: Centralized configuration for easy customization
+\end{itemize}
+
+\section{Design and Implementation}
+
+\subsection{Camera Capture Module}
+
+The camera module abstracts the complexity of the OV7692 camera driver and DMA-based image streaming. The key function \texttt{camera\_utils\_capture()} performs the following operations:
+
+\begin{enumerate}
+    \item Initiates camera capture using DMA streaming mode
+    \item Reads image data line-by-line from stream buffers
+    \item Converts pixel format from camera RGB888 to CNN-compatible format
+    \item Optionally converts to RGB565 for TFT display
+\end{enumerate}
+
+The CNN input format requires pixels packed as 32-bit words with the formula:
+\begin{equation}
+    \text{CNN\_pixel} = ((B \ll 16) | (G \ll 8) | R) \oplus \text{0x00808080}
+\end{equation}
+
+The XOR operation with 0x00808080 converts unsigned pixel values to signed representation required by the CNN accelerator.
+
+\subsection{Inference Engine Module}
+
+The inference module provides a clean API for CNN operations, abstracting the low-level register access. The inference workflow consists of:
+
+\begin{lstlisting}[caption={Inference API usage}]
+// Initialize CNN once at startup
+inference_init();
+
+// For each frame:
+inference_start();
+inference_load_input(buffer, size);
+inference_wait(&result);
+
+// Result contains:
+// - raw_output[]: Raw CNN outputs
+// - softmax[]: Probability distribution
+// - predicted_class: Index of winner
+// - confidence_percent: 0-100%
+\end{lstlisting}
+
+The module handles the CNN FIFO loading, interrupt-based completion detection, and softmax post-processing automatically.
+
+\subsection{Serial Streaming Module}
+
+To enable result validation and dataset collection, a serial streaming module transmits captured images to a host computer. The protocol uses markers for reliable parsing:
+
+\begin{lstlisting}[caption={Serial protocol format}]
+<<<RESULT>>>
+CAPTURE_ID:1
+CLASS:Horse
+CONFIDENCE:87
+INFERENCE_TIME_US:1234
+<<<RESULT>>>
+
+<<<IMG_START>>>
+WIDTH:128
+HEIGHT:128
+FORMAT:RGB888
+DATA_START
+P3
+128 128
+255
+R G B R G B ...
+DATA_END
+<<<IMG_END>>>
+\end{lstlisting}
+
+The PPM (Portable Pixmap) format is used for image data due to its simplicity and wide compatibility.
+
+\subsection{Configuration System}
+
+The \texttt{app\_config.h} header centralizes all configurable parameters:
+
+\begin{lstlisting}[caption={Configuration options}]
+// Image dimensions
+#define IMAGE_SIZE_X  128
+#define IMAGE_SIZE_Y  128
+
+// Feature toggles
+#define TFT_ENABLE           0
+#define SERIAL_STREAM_ENABLE 1
+#define ASCII_ART_ENABLE     0
+#define LIVE_FEED_ENABLE     1
+
+// Timing
+#define LIVE_FEED_DELAY_MS   50
+\end{lstlisting}
+
+This design allows adaptation to different projects by modifying a single file.
+
+\section{CNN Model}
+
+\subsection{Network Architecture}
+
+The horse-or-human classifier uses a 7-layer CNN architecture optimized for the MAX78000's accelerator constraints:
+
+\begin{table}[htbp]
+\caption{CNN Layer Configuration}
+\begin{center}
+\begin{tabular}{|c|c|c|}
+\hline
+\textbf{Layer} & \textbf{Operations} & \textbf{Type} \\
+\hline
+0 & 7,340,032 & Conv + ReLU \\
+1 & 19,267,584 & Conv + ReLU + Pool \\
+2 & 19,070,976 & Conv + ReLU + Pool \\
+3 & 4,792,320 & Conv + ReLU + Pool \\
+4 & 600,064 & Conv + ReLU \\
+5 & 295,936 & Conv + ReLU \\
+6 & 2,048 & Fully Connected \\
+\hline
+\textbf{Total} & \textbf{51,368,960} & \\
+\hline
+\end{tabular}
+\end{center}
+\label{tab:cnn}
+\end{table}
+
+\subsection{Resource Utilization}
+
+The model efficiently utilizes the MAX78000's resources:
+
+\begin{itemize}
+    \item \textbf{Weight Memory}: 57,776 bytes of 442,368 bytes (13.1\%)
+    \item \textbf{Bias Memory}: 2 bytes of 2,048 bytes (0.1\%)
+    \item \textbf{SRAM Usage}: 104,188 bytes of 131,072 bytes (79.5\%)
+    \item \textbf{Flash Usage}: 127,232 bytes of 524,288 bytes (24.3\%)
+\end{itemize}
+
+\section{Host-Side Tools}
+
+A Python script enables image capture and result logging on the host computer:
+
+\begin{lstlisting}[language=Python, caption={Capture script usage}]
+# Install dependencies
+pip install pyserial pillow
+
+# Run capture tool
+python capture_images.py --port COM3
+
+# Images saved as:
+# capture_0001_Horse_87pct_timestamp.png
+# capture_0001_Horse_87pct_timestamp.txt
+\end{lstlisting}
+
+The tool automatically parses the serial protocol, reconstructs images from PPM data, and saves results with descriptive filenames for easy organization.
+
+\section{Results and Discussion}
+
+\subsection{Performance Metrics}
+
+The implemented system achieves the following performance:
+
+\begin{itemize}
+    \item \textbf{Inference Time}: Approximately 1-2 ms per frame
+    \item \textbf{Total Frame Time}: ~50 ms including capture and streaming
+    \item \textbf{Classification Accuracy}: Dependent on training data quality
+    \item \textbf{Power Consumption}: Ultra-low due to CNN accelerator efficiency
+\end{itemize}
+
+\subsection{Modularity Benefits}
+
+The modular design provides several advantages:
+
+\begin{enumerate}
+    \item \textbf{Reusability}: Utility modules can be copied directly to new projects
+    \item \textbf{Maintainability}: Changes to one module don't affect others
+    \item \textbf{Testability}: Individual modules can be tested in isolation
+    \item \textbf{Configurability}: Single configuration file for all options
+\end{enumerate}
+
+\subsection{Limitations}
+
+Current limitations include:
+
+\begin{itemize}
+    \item Serial streaming bandwidth limits live video frame rate
+    \item PPM format increases data size compared to compressed formats
+    \item Fixed 128×128 resolution matches CNN input requirements
+\end{itemize}
+
+\section{Conclusion}
+
+This project successfully demonstrates the implementation of a modular CNN-based image classification system on the MAX78000 microcontroller. The key contributions include:
+
+\begin{enumerate}
+    \item A functional horse-or-human classifier running entirely on-device
+    \item A reusable modular software architecture for edge AI applications
+    \item Serial streaming capability for result validation and dataset collection
+    \item Comprehensive documentation for educational purposes
+\end{enumerate}
+
+The modular design enables rapid adaptation for other classification tasks by simply replacing the CNN weights and updating class labels. Future work could include adding compressed image formats for faster streaming, implementing over-the-air model updates, and extending the system to multi-class classification problems.
+
+\section*{Acknowledgment}
+
+The author acknowledges Analog Devices for providing the MAX78000 development platform and SDK, and the course instructors of COE187: Embedded Hardware and Software Design for guidance throughout this project.
+
+\begin{thebibliography}{00}
+\bibitem{b1} S. Han, H. Mao, and W. J. Dally, ``Deep Compression: Compressing Deep Neural Networks with Pruning, Trained Quantization and Huffman Coding,'' in \textit{Proc. Int. Conf. Learn. Represent. (ICLR)}, San Juan, Puerto Rico, 2016, pp. 1-14.
+
+\bibitem{b2} Analog Devices, ``MAX78000 Ultra-Low-Power Arm Cortex-M4 Processor with Neural Network Accelerator for AI at the Edge,'' MAX78000 Datasheet, Rev. 3, 2023. [Online]. Available: https://www.analog.com/media/en/technical-documentation/data-sheets/max78000.pdf
+
+\bibitem{b3} R. David, J. Duke, A. Jain, V. J. Reddi, N. Jeffries, J. Li, N. Kreeger, I. Nappier, M. Natraj, T. Wang, P. Warden, and R. Rhodes, ``TensorFlow Lite Micro: Embedded Machine Learning for TinyML Systems,'' in \textit{Proc. Mach. Learn. Syst. (MLSys)}, vol. 3, 2021, pp. 800-811.
+
+\bibitem{b4} P. Warden and D. Situnayake, \textit{TinyML: Machine Learning with TensorFlow Lite on Arduino and Ultra-Low-Power Microcontrollers}, 1st ed. Sebastopol, CA, USA: O'Reilly Media, 2019.
+
+\bibitem{b5} V. Sze, Y.-H. Chen, T.-J. Yang, and J. S. Emer, ``Efficient Processing of Deep Neural Networks: A Tutorial and Survey,'' \textit{Proc. IEEE}, vol. 105, no. 12, pp. 2295-2329, Dec. 2017, doi: 10.1109/JPROC.2017.2761740.
+\end{thebibliography}
+
+\end{document}
